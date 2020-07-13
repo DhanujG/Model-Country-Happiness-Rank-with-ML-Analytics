@@ -1,0 +1,244 @@
+---
+title: "Old Regression Suite"
+author: "Dhanuj Gandikota"
+date: "April 15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Libraries
+```{r}
+library(FNN)
+library(glmnet)
+library(leaps)
+library(SignifReg)
+library(boot)
+```
+
+
+## Getting data
+```{r}
+getwd()
+mydata = read.csv("C:/Users/Dhanuj/Desktop/415_project/dataset.csv",
+                  header = TRUE)
+
+#Test and data split
+set.seed(12345)
+train.id = sample(1:nrow(mydata), trunc(nrow(mydata) * 0.7))
+data.train = mydata[train.id, -c(1:2)]
+data.test = mydata[-train.id, -c(1:2)]
+
+dim(data.train)
+dim(data.test)
+
+
+#Make sure to do -c(1:2) to ignore country name and happiness rank when fitting models; they have no place in calculations.
+```
+
+
+##Scatterplot Matrix
+```{r}
+pairs(mydata)
+```
+
+
+##Linear
+```{r}
+#Linear Model
+lm.fit = lm(happysc ~ . , data = data.train)
+summary(lm.fit)
+
+#linear train
+lm.train.pred = predict(lm.fit, data.train)
+lm.train.mse = mean((lm.train.pred - data.train)^2)
+lm.train.mse
+#training MSE: 83030666
+
+#linear test
+lm.test.pred = predict(lm.fit, data.test)
+lm.test.mse = mean((lm.test.pred - data.test)^2)
+lm.test.mse
+#testing MSE: 57103369
+```
+
+
+##MSE
+```{r}
+#purpose: this is just so the copied code from KNN lab functions properly
+
+mse <- function(model, y, data) {
+# model is an lm object (a linear regression)
+# y is the response variable from model
+# data is the dataset we want to use to compute fitted values using our model
+# The predict function computes fitted values when given a model and predictor data
+yhat <- predict(model, data)
+mean((y - yhat)^2)
+}
+```
+
+
+##KNN
+```{r}
+#knn train
+k_range  =c(1,5,10,25,50)
+trainMSE =c() #creating null vector
+for(i in 1:length(k_range)){
+  knn.train = knn.reg(train =  data.train, test = data.train,
+  y = data.train$happysc, k = k_range[i])
+  
+  trainMSE[i] = mean((data.train$happysc - knn.train$pred)^2)
+}
+
+
+#knn test
+testMSE =c()#creating null vector
+for(i in 1:length(k_range)){
+  knn.test = knn.reg(train =  data.train, test = data.test,
+  y = data.train$happysc, k = k_range[i])
+
+  testMSE[i] = mean((data.test$happysc - knn.test$pred)^2)
+}
+
+#knn plotting
+plot(trainMSE ~c(1, 1/5, 1/10, 1/25, 1/50), type = "b", lwd = 2, col = "blue",main = "Training and Test MSE for KNN", xlab = "1/K", ylab = "MSE")
+# Add the test MSE
+lines(testMSE ~c(1, 1/5, 1/10, 1/25, 1/50), type = "b", lwd = 2, col = "red")
+# Add the linear regression MSE
+abline(a =mse(lm(happysc ~ ., data = data.train), data.train$happysc, data.train),b = 0, lty = 3, col = "blue")
+abline(a =mse(lm(happysc ~ ., data = data.train), data.test$happysc, data.test),b = 0, lty = 2, col = "red")
+legend("topright", legend =c("Training KNN", "Test KNN", "Training OLS", "Test OLS"),col =c("blue", "red"), cex = .75,lwd =c(2, 2, 1, 1), pch =c(1, 1, NA, NA), lty =c(1, 1, 3, 2))
+
+
+#knn best model
+#Comment: Looks like best K is 5. 
+
+#best knn train
+knn.train = knn.reg(train =  data.train, test = data.train,
+y = data.train$happysc, k = 5)
+trainMSE = mean((data.train$happysc - knn.train$pred)^2)
+trainMSE
+#train mse: 0.2887815
+  
+#best knn test
+knn.test = knn.reg(train =  data.train, test = data.test,
+y = data.train$happysc, k = 5)
+testMSE = mean((data.test$happysc - knn.test$pred)^2)
+testMSE
+#test MSE: 0.5563882
+
+```
+
+
+## Doing Lasso over ridge regression (need short justification; one liner)
+```{r}
+##Lasso - The variables included in the model should be the non-zero coefficients
+train.matrix = model.matrix(happysc ~., data = data.train)
+test.matrix = model.matrix(happysc ~., data = data.test)
+grid = 10 ^ seq(4, -2, length = 100)
+
+##Cross validation
+lasso.fit = glmnet(train.matrix, data.train$happysc, alpha = 1, lambda = grid, thresh = 1e-12)
+cv.out = cv.glmnet(train.matrix, data.train$happysc, alpha = 1, lambda = grid, thresh = 1e-12)
+plot(cv.out)
+bestlam = cv.out$lambda.min
+bestlam 
+#best lambda: 0.02656088
+
+
+#Training error
+pred.lasso.train = predict(lasso.fit, s = bestlam, newx = train.matrix)
+mean((pred.lasso.train - data.train$happysc)^2)
+predict(lasso.fit, s = bestlam, type = "coefficients")
+ 
+
+#Test error 
+pred.lasso.test = predict(lasso.fit, s = bestlam, newx = test.matrix)
+mean((pred.lasso.test - data.test$happysc)^2)
+predict(lasso.fit, s = bestlam, type = "coefficients")
+
+
+summary(lasso.fit)
+summary(cv.out)
+#The variables included in the model should be the non-zero coefficients
+#training recommends: 2016inflation, avginflation, expectschool, meanschool, avgtemp
+#train mse: 0.3530262
+
+#test recommends: the same
+#test mse: 0.3760221
+```
+
+
+
+## Best subset selection 
+```{r}
+#Just removing country and rank from this fit
+#setting up data ONLY FOR SUBSET SELECTION
+set.seed(12345)
+newdata = mydata[,-c(1:2)]
+train.id2 = sample(1:nrow(newdata), trunc(nrow(newdata) * 0.7))
+#
+data.train2 = newdata[train.id2,]
+data.test2 = newdata[-train.id2,]
+#
+train.mat = model.matrix(happysc ~., data = data.train2)
+test.mat = model.matrix(happysc ~., data = data.test2)
+
+
+#Asterisk indicates a given variable is included in the model
+#nvmax set to allow use of all the variables
+regfit.full = regsubsets(happysc ~ ., data = newdata, nvmax = 11)
+reg.summary = summary(regfit.full)
+reg.summary
+
+
+#Analysis
+names(reg.summary)
+reg.summary$rsq
+
+
+
+#Plotting adjR2, Cp, and BIC all at once to help select best model
+plot(regfit.full, scale = "adjr2")
+plot(regfit.full, scale = "Cp")
+plot(regfit.full, scale = "bic")
+
+
+#Because the above shows that BIC yields the simplist model
+#Doing BIC fitting and train/test MSE calculations
+which.min(reg.summary$bic)
+coef(regfit.full, 4) #recommended: HDI, mean school, avetemp, and rangetemp
+
+
+
+#Calculating MSE
+coefi.bic = coef(regfit.full, 4)
+bic.train.error = mean((data.train2$happysc - train.mat[,names(coefi.bic)]%*%coefi.bic)^2)
+bic.test.error = mean((data.test2$happysc - test.mat[,names(coefi.bic)]%*%coefi.bic)^2)
+bic.train.error
+bic.test.error
+
+
+#training MSE: 0.3709279
+#test MSE: 0.3063137
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
